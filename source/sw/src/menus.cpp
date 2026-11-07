@@ -2423,8 +2423,8 @@ MNU_InitMenus(void)
 //        #else
 //        main_i[0].child = &skillgroup;
 //        #endif
-    main_i[4].text = (SW_SHAREWARE) ? MAIN_MENU_HOW_TO_ORDER : MAIN_MENU_COOL_STUFF;
-    main_i[4].hotkey = (SW_SHAREWARE) ? KEYSC_H : KEYSC_C;
+    main_i[5].text = (SW_SHAREWARE) ? MAIN_MENU_HOW_TO_ORDER : MAIN_MENU_COOL_STUFF;  // (MULTIPLAYER is item 1)
+    main_i[5].hotkey = (SW_SHAREWARE) ? KEYSC_H : KEYSC_C;
 }
 
 ////////////////////////////////////////////////
