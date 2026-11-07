@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>SW Chosen</title>
+<meta name="description" content="Shadow Warrior in your browser: SW Chosen __VERSION__ (VoidSW) with online lobbies. Bring your own SW.GRP.">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ShadowWarrior">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css?v=__BUILD__">
+</head>
+<body>
+<canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+<input id="kbd" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-hidden="true" tabindex="-1">
+
+<main id="launcher">
+  <header>
+    <h1>ShadowWarrior <span>Chosen</span></h1>
+    <p class="sub">Shadow Warrior in your browser &middot; version __VERSION__ <small>(build __BUILD__)</small></p>
+  </header>
+
+  <section id="loading" class="card">
+    <p id="loadText">Loading the game&hellip;</p>
+    <progress id="loadBar" max="100" value="0"></progress>
+  </section>
+
+  <section id="lastCrash" class="card" hidden>
+    <h2>Last time the game stopped</h2>
+    <p id="crashText"></p>
+    <details>
+      <summary>The end of its log</summary>
+      <pre id="crashLog" class="small"></pre>
+    </details>
+    <div class="row">
+      <button id="crashCopy">Copy the report</button>
+      <button id="crashHide">OK</button>
+    </div>
+  </section>
+  <section id="ready" class="card" hidden>
+    <button id="play" class="big">Play</button>
+    <p id="filesInfo" class="small"></p>
+  </section>
+
+  <section id="needFiles" class="card" hidden>
+    <h2>Your Shadow Warrior files</h2>
+    <p>The game files are not included. Pick them from your own copy of Shadow Warrior
+      (<i>Atomic Edition</i>, <i>20th Anniversary World Tour</i> or <i>Megaton Edition</i> from GOG or Steam, the CD,
+      or the free shareware version). They stay on this device.</p>
+    <p class="small">Needed: <code>SW.GRP</code>. Optional: <code>SW.RTS</code>, user maps (<code>.map</code>),
+      add-ons (<code>.grp</code>, <code>.zip</code>), CD music (<code>trackXX.ogg</code>).</p>
+  </section>
+
+  <section id="filesCard" class="card">
+    <div class="row">
+      <label class="button">Choose files<input id="pickFiles" type="file" multiple hidden></label>
+      <label class="button" id="pickFolderLabel">Choose a folder<input id="pickFolder" type="file" webkitdirectory multiple hidden></label>
+    </div>
+    <p class="small">Select all files of your Shadow Warrior folder at once, or a <code>.zip</code> of it.
+      On iPad: in the Files app, open the Shadow Warrior folder, tap <b>Select</b>, <b>Select All</b>, then <b>Open</b>.</p>
+    <p id="importText" class="small status"></p>
+    <details>
+      <summary>Settings, saves and files</summary>
+      <div class="row">
+        <button id="backup">Download settings &amp; saves</button>
+        <button id="removeAll" class="danger">Remove everything</button>
+      </div>
+      <p class="small">Restore a backup by choosing its <code>.zip</code> with &ldquo;Choose files&rdquo;.
+        Your saves stay in this browser on this device.</p>
+    </details>
+  </section>
+
+  <section id="install" class="card" hidden>
+    <h2>Install it</h2>
+    <p id="installText"></p>
+    <button id="installButton" hidden>Install</button>
+  </section>
+
+  <section class="card small">
+    <p><b>Online play:</b> MULTIPLAYER &gt; ONLINE. SERVER starts as the server this page comes from:
+      enter its key. NET STATS there shows your ping and frame rate in the game. LAN games aren't
+      possible in a browser.</p>
+    <p><b>Controls:</b> keyboard and mouse (click the game to capture the mouse), a game controller, or the
+      touch controls on tablets and phones.</p>
+    <p>SW Chosen is free software (GPL 2), based on <a href="https://github.com/nukeykt/NBlood">VoidSW (NBlood)</a> and
+      <a href="https://github.com/AdrianPol-projects/NotBlood-Chosen">NotBlood Chosen</a>.
+      Source and other platforms: <a href="https://github.com/AdrianPol-projects/ShadowWarrior-Chosen">ShadowWarrior-Chosen</a>.
+      Shadow Warrior &copy; its owners; no game data is provided here.</p>
+  </section>
+</main>
+
+<script src="app.js?v=__BUILD__"></script>
+<script src="swchosen.js?v=__BUILD__" async onload="gameLoaded()"></script>
+</body>
+</html>

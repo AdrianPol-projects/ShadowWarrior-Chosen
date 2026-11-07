@@ -1,0 +1,380 @@
+---
+name: Release builds
+
+# Ready-to-play builds of SW Chosen (VoidSW with online lobbies, LAN game finder, touch controls)
+# for Windows, Linux (x86_64 and arm64), macOS, Android, iPad and web browsers, published to the release
+# "v<CHOSEN_VERSION>" of AdrianPol-projects/ShadowWarrior-Chosen, marked as the latest release; notes:
+# package/release/NOTES.md. Every machine in a network game needs the same version (CHOSEN_VERSION in
+# source/sw/src/chosen.h).
+
+'on':
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'server/**'
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Platforms to build: all; only macos, android or web (then only that download of the release is replaced); android-test (an APK artifact, nothing published); linux-test (the Linux builds as artifacts, nothing published)'
+        type: choice
+        options: [all, macos, android, web, android-test, linux-test]
+        default: all
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDL_VERSION: 2.32.10
+
+jobs:
+  # Linux builds that run on any distribution from about 2022 on: built on Ubuntu 22.04 (glibc 2.35) with SDL2
+  # linked in (it loads X11, Wayland, ALSA, PulseAudio/PipeWire and OpenGL itself when the game starts) and
+  # without the GTK startup window, so nothing but the C library and its basics has to be installed.
+  build-linux:
+    name: Linux ${{ matrix.arch }}
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux-test')
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: linux-x64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:22.04
+    steps:
+      - name: Install prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends build-essential cmake curl ca-certificates git pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxinerama-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev
+      - uses: actions/checkout@v4
+      - name: Let git read the checkout (the build puts its revision in the game)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Build SDL2 (static)
+        run: |
+          curl -fsSL -o sdl.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz"
+          tar xf sdl.tar.gz
+          cmake -S "SDL2-${SDL_VERSION}" -B sdlbuild -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$PWD/sdl"
+          cmake --build sdlbuild -j$(nproc)
+          cmake --install sdlbuild
+      - name: Build
+        # FLAC and libvpx sonames differ between distributions; the game needs neither
+        run: make -j$(nproc) sw HAVE_FLAC=0 USE_LIBVPX=0 LTO=0 HAVE_GTK2=0 SDL_STATIC=1 SDLCONFIG="$PWD/sdl/bin/sdl2-config"
+      - name: Check dependencies
+        run: |
+          # libasound (ALSA, for MIDI music) is part of every desktop Linux
+          readelf -d ./swchosen | grep NEEDED
+          if readelf -d ./swchosen | grep NEEDED | grep -v -E 'lib(c|m|dl|pthread|rt|stdc\+\+|gcc_s|asound)\.so|ld-linux'; then
+            echo "binary depends on a library that may not be installed everywhere"
+            exit 1
+          fi
+          echo "newest glibc symbol it needs:"
+          objdump -T ./swchosen | grep -o 'GLIBC_[0-9.]*' | sort -u -V | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-${{ matrix.target }}
+          path: ./swchosen
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows x64
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all')
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: >-
+          msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: mingw64
+          update: true
+          cache: true
+          install: git mingw-w64-x86_64-toolchain make
+      - name: Build
+        run: make -j$(nproc) sw SDLCONFIG= LTO=0 HAVE_FLAC=0 USE_LIBVPX=0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-win64
+          path: ./swchosen.exe
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS (Apple Silicon + Intel)
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'macos')
+    runs-on: macos-latest  # named images get retired (macos-14, then 15 sat in the queue)
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SDL2 (universal, static)
+        run: |
+          curl -fsSL -o sdl.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz"
+          tar xf sdl.tar.gz
+          cmake -S "SDL2-${SDL_VERSION}" -B sdlbuild -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DCMAKE_INSTALL_PREFIX="$PWD/sdl"
+          cmake --build sdlbuild -j4
+          cmake --install sdlbuild
+          # the makefile asks for --libs; a static SDL needs its frameworks too
+          printf '#!/bin/sh\nif [ "$1" = "--libs" ]; then exec "%s/sdl/bin/sdl2-config" --static-libs; fi\nexec "%s/sdl/bin/sdl2-config" "$@"\n' "$PWD" "$PWD" > sdl2-config-static
+          chmod +x sdl2-config-static
+          ./sdl2-config-static --libs
+      - name: Build (arm64)
+        run: |
+          make -j4 sw ARCH=arm64 SDLCONFIG="$PWD/sdl2-config-static" HAVE_FLAC=0 USE_LIBVPX=0 LTO=0
+          mv swchosen swchosen-arm64
+          make clean
+      - name: Build (x86_64)
+        run: |
+          make -j4 sw ARCH=x86_64 SDLCONFIG="$PWD/sdl2-config-static" HAVE_FLAC=0 USE_LIBVPX=0 LTO=0
+          mv swchosen swchosen-x86_64
+      - name: Make the app
+        run: |
+          rm -rf ShadowWarrior.app
+          lipo -create -output swchosen-universal swchosen-arm64 swchosen-x86_64
+          lipo -info swchosen-universal
+          cp -R platform/Apple/bundles/ShadowWarrior.app .
+          mkdir -p ShadowWarrior.app/Contents/MacOS
+          cp swchosen-universal ShadowWarrior.app/Contents/MacOS/SWChosen
+          plist=ShadowWarrior.app/Contents/Info.plist
+          version=$(sed -n 's/#define CHOSEN_VERSION "\(.*\)"/\1/p' source/sw/src/chosen.h)
+          plutil -replace CFBundleIdentifier -string com.adrianpol.swchosen "$plist"
+          plutil -replace CFBundleName -string "SW Chosen" "$plist"
+          plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+          plutil -replace CFBundleVersion -string "${{ github.run_number }}" "$plist"
+          plutil -replace LSMinimumSystemVersion -string "11.0" "$plist"
+          plutil -replace NSHighResolutionCapable -bool true "$plist"
+          plutil -lint "$plist"
+          codesign --force --deep -s - ShadowWarrior.app
+          codesign --verify --verbose ShadowWarrior.app
+          ditto -c -k --keepParent ShadowWarrior.app ShadowWarrior.app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-macos
+          path: ./ShadowWarrior.app.zip
+          if-no-files-found: error
+
+  build-android:
+    name: Android
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all' || startsWith(inputs.only, 'android'))
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264" "cmake;3.22.1" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Fetch SDL2 and gl4es
+        run: platform/Android/fetch-deps.sh
+      - name: Build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          NOTBLOOD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          # the same signing key every time, so new versions install over old ones
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export NOTBLOOD_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          fi
+          gradle -p platform/Android assembleRelease --no-daemon \
+            -PversionCode=$((100 + ${{ github.run_number }})) -Pabis=arm64-v8a,armeabi-v7a,x86_64
+          cp platform/Android/app/build/outputs/apk/release/app-release.apk ShadowWarrior.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs ShadowWarrior.apk | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-android
+          path: ./ShadowWarrior.apk
+          if-no-files-found: error
+      # libmain.so with its symbols, to turn the offsets of a crash report in swchosen.log into lines
+      - name: Collect native symbols
+        run: |
+          mkdir symbols
+          for f in $(find platform/Android/app/build/intermediates -path '*merged_native_libs*' -name libmain.so); do
+            abi=$(basename "$(dirname "$f")")
+            mkdir -p "symbols/$abi" && cp "$f" "symbols/$abi/"
+          done
+          ls -lR symbols
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-android-symbols
+          path: ./symbols
+
+  build-ios:
+    name: iPad / iPhone (unsigned IPA)
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all')
+    runs-on: macos-latest
+    env:
+      GL4ES_COMMIT: ec16bedd8819c475326f4f1a3063772c6d986e06
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch SDL2 and gl4es
+        run: |
+          mkdir -p third_party
+          curl -fsSL -o sdl2.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz"
+          tar xzf sdl2.tar.gz -C third_party
+          curl -fsSL -o gl4es.tar.gz "https://github.com/ptitSeb/gl4es/archive/${GL4ES_COMMIT}.tar.gz"
+          tar xzf gl4es.tar.gz -C third_party
+          for p in platform/iOS/gl4es/*.patch; do
+            patch -d "third_party/gl4es-${GL4ES_COMMIT}" -p1 --forward < "$p"
+          done
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake -S platform/iOS -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DSDL2_SOURCE_DIR="$PWD/third_party/SDL2-${SDL_VERSION}" \
+            -DGL4ES_SOURCE_DIR="$PWD/third_party/gl4es-${GL4ES_COMMIT}" \
+            -DNOTBLOOD_BUILD=${{ github.run_number }} \
+            -DNOTBLOOD_VERSION=$(sed -n 's/#define CHOSEN_VERSION "\(.*\)"/\1/p' source/sw/src/chosen.h)
+          cmake --build build-ios --config Release --target SWChosen -- \
+            -sdk iphoneos -quiet \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 2>&1 | tail -40
+      - name: Package IPA
+        run: |
+          APP=$(find build-ios -type d -name SWChosen.app -path '*Release-iphoneos*' | head -n 1)
+          test -n "$APP" || { echo "SWChosen.app not found"; exit 1; }
+          mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry ../ShadowWarrior.ipa Payload)
+          ls -la ShadowWarrior.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-ios
+          path: ./ShadowWarrior.ipa
+          if-no-files-found: error
+
+  # the web version (WebAssembly): the relay server (server/relay.py) installs this zip and serves it at /play
+  build-web:
+    name: Web browsers (WebAssembly)
+    if: github.repository == 'AdrianPol-projects/ShadowWarrior-Chosen' && (github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'web')
+    runs-on: ubuntu-24.04
+    env:
+      EMSDK_VERSION: 4.0.15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ env.EMSDK_VERSION }}
+      - name: Emscripten
+        run: |
+          [ -d ~/emsdk ] || git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git ~/emsdk
+          ~/emsdk/emsdk install "$EMSDK_VERSION" > /dev/null
+          ~/emsdk/emsdk activate "$EMSDK_VERSION" > /dev/null
+      - name: Build
+        run: EMSDK=~/emsdk bash platform/Web/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swchosen-web
+          path: build-web/ShadowWarrior-Chosen-*-web.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [build-linux, build-windows, build-macos, build-android, build-ios, build-web]
+    # skipped jobs (a macOS-, Android- or web-only run) are fine, failed ones are not
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && inputs.only != 'android-test' && inputs.only != 'linux-test' && (needs.build-macos.result == 'success' || inputs.only == 'android' || inputs.only == 'web') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Package
+        env:
+          ONLY: ${{ inputs.only || 'all' }}
+        run: |
+          version=$(sed -n 's/#define CHOSEN_VERSION "\(.*\)"/\1/p' source/sw/src/chosen.h)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          targets="linux-x64 linux-arm64 win64"
+          [ "$ONLY" = all ] || targets=""
+          for target in $targets; do
+            dir="pkg/$target/ShadowWarrior"
+            mkdir -p "$dir/autoload"
+            cp artifacts/swchosen-$target/* "$dir/"
+            cp package/common/gamecontrollerdb.txt package/common/gpl-2.0.txt package/common/buildlic.txt "$dir/"
+            cp package/release/README.txt "$dir/README - SW Chosen.txt"
+            cp package/release/autoload.txt "$dir/autoload/Put add-ons here.txt"
+            chmod +x "$dir/swchosen" 2>/dev/null || true
+            (cd "pkg/$target" && zip -9 -r "../../ShadowWarrior-Chosen-$version-$target.zip" ShadowWarrior)
+          done
+          if [ "$ONLY" = all ] || [ "$ONLY" = macos ]; then
+            dir=pkg/macos/ShadowWarrior
+            mkdir -p "$dir"
+            (cd "$dir" && unzip -q ../../../artifacts/swchosen-macos/ShadowWarrior.app.zip)
+            cp package/release/README.txt "$dir/README - SW Chosen.txt"
+            (cd pkg/macos && zip -9 -r -y "../../ShadowWarrior-Chosen-$version-macos.zip" ShadowWarrior)
+          fi
+          if [ "$ONLY" = all ] || [ "$ONLY" = android ]; then
+            cp artifacts/swchosen-android/ShadowWarrior.apk "ShadowWarrior-Chosen-$version-android.apk"
+          fi
+          if [ "$ONLY" = all ]; then
+            cp artifacts/swchosen-ios/ShadowWarrior.ipa "ShadowWarrior-Chosen-$version-ios.ipa"
+          fi
+          if [ "$ONLY" = all ] || [ "$ONLY" = web ]; then
+            cp artifacts/swchosen-web/ShadowWarrior-Chosen-*-web.zip .
+          fi
+          ls -l ShadowWarrior-Chosen-*
+      - name: Publish to the release of this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ONLY: ${{ inputs.only || 'all' }}
+        run: |
+          # Runs can be queued late; never let an older commit replace a newer build.
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" -q .sha)
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "Branch head is $HEAD_SHA, this run built $GITHUB_SHA - not publishing."
+            exit 0
+          fi
+          TAG="v$VERSION"
+          if [ "$ONLY" = macos ] || [ "$ONLY" = android ] || [ "$ONLY" = web ]; then
+            # replace only that platform's download; the others stay as they are
+            case "$ONLY" in
+              macos) pattern='-macos\.zip$'; file=$(ls ShadowWarrior-Chosen-*-macos.zip); name=macOS ;;
+              android) pattern='-android\.apk$'; file=$(ls ShadowWarrior-Chosen-*-android.apk); name=Android ;;
+              web) pattern='-web\.zip$'; file=$(ls ShadowWarrior-Chosen-*-web.zip); name=web ;;
+            esac
+            gh release view "$TAG" >/dev/null
+            for a in $(gh release view "$TAG" --json assets -q '.assets[].name' | grep -- "$pattern"); do
+              gh release delete-asset "$TAG" "$a" -y
+            done
+            gh release upload "$TAG" "$file" --clobber
+            # keep the notes of earlier single-platform updates
+            gh release view "$TAG" --json body -q .body | grep '^_The .* download was updated on its own' | grep -v "^_The $name " > earlier.txt || true
+            { cat package/release/NOTES.md; echo; cat earlier.txt; echo "_The $name download was updated on its own in build ${{ github.run_number }} (commit ${GITHUB_SHA::7}); the other downloads are from the build in the title._"; } > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+            exit 0
+          fi
+          TITLE="SW Chosen $VERSION (build ${{ github.run_number }})"
+          files=$(ls ShadowWarrior-Chosen-*.zip ShadowWarrior-Chosen-*.apk ShadowWarrior-Chosen-*.ipa)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # drop the zips of the previous build, their names carry the version
+            for a in $(gh release view "$TAG" --json assets -q '.assets[].name'); do
+              gh release delete-asset "$TAG" "$a" -y
+            done
+            gh release upload "$TAG" $files --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file package/release/NOTES.md --prerelease=false --latest
+          else
+            gh release create "$TAG" $files --target "$GITHUB_SHA" --latest --title "$TITLE" --notes-file package/release/NOTES.md
+          fi

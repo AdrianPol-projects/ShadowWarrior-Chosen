@@ -1,0 +1,333 @@
+// iOS/iPadOS platform glue for NotBlood
+
+#import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
+#import <OpenGLES/ES2/gl.h>
+#import <objc/runtime.h>
+
+#include "compat.h"
+#include "iosbits.h"
+#include "SDL_syswm.h"
+
+#ifdef USE_OPENGL
+// from gl4es' include/gl4esinit.h (not on the include path: its GL headers would shadow the system ones)
+extern "C" {
+void set_getprocaddress(void *(*new_proc_address)(const char *));
+void set_getmainfbsize(void (*new_getMainFBSize)(int *width, int *height));
+void initialize_gl4es(void);
+void *gl4es_GetProcAddress(const char *name);
+}
+#endif
+
+#include <dlfcn.h>
+#include "chosengame.h"
+#include <unistd.h>
+
+static const char kReadmeName[] = CHOSEN_GAME_README_NAME;
+static const char kReadmeText[] =
+    CHOSEN_GAME_NAME " for iPad\n"
+    "=====================\n\n"
+    "Copy your " CHOSEN_GAME_FILES " into this folder (On My iPad > " CHOSEN_GAME_NAME ") using the Files app.\n\n"
+    CHOSEN_GAME_README_FILES
+    "Config, savegames and touchcontrols.cfg are also stored in this folder.\n";
+
+char *ios_getappdir(void)
+{
+    @autoreleasepool
+    {
+        NSString *path = [[NSBundle mainBundle] resourcePath];
+        return path ? Xstrdup([path fileSystemRepresentation]) : NULL;
+    }
+}
+
+char *ios_getdocumentsdir(void)
+{
+    @autoreleasepool
+    {
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        if ([paths count] == 0)
+            return NULL;
+        return Xstrdup([[paths objectAtIndex:0] fileSystemRepresentation]);
+    }
+}
+
+void ios_getscreensize(int32_t *pixelw, int32_t *pixelh, int32_t *pointw, int32_t *pointh)
+{
+    @autoreleasepool
+    {
+        UIScreen *screen = [UIScreen mainScreen];
+        CGRect const native = [screen nativeBounds];
+        CGRect const points = [screen bounds];
+
+        // Game is landscape-only: report the long side as width.
+        int32_t const nw = (int32_t)native.size.width, nh = (int32_t)native.size.height;
+        int32_t const pw = (int32_t)points.size.width, ph = (int32_t)points.size.height;
+
+        if (pixelw) *pixelw = max(nw, nh);
+        if (pixelh) *pixelh = min(nw, nh);
+        if (pointw) *pointw = max(pw, ph);
+        if (pointh) *pointh = min(pw, ph);
+    }
+}
+
+static int s_renderScale = 100;
+
+static UIView *ios_gameview(SDL_Window *window)
+{
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!window || !SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_UIKIT)
+        return nil;
+    return info.info.uikit.window.rootViewController.view;
+}
+
+void ios_scaledsize(int pct, int32_t *w, int32_t *h)
+{
+    @autoreleasepool
+    {
+        UIScreen *screen = [UIScreen mainScreen];
+        CGRect const points = [screen bounds];
+        CGFloat const pw = max(points.size.width, points.size.height), ph = min(points.size.width, points.size.height);
+        CGFloat const scale = screen.nativeScale * clamp(pct, 25, 100) / 100.0;
+        // SDL's view: backing size = (int)(bounds * contentScaleFactor)
+        *w = (int32_t)(pw * scale);
+        *h = (int32_t)(ph * scale);
+    }
+}
+
+int const ios_renderscales[kIosRenderScales] = { 100, 90, 80, 75, 66, 60, 50, 40, 33, 25 };
+
+int ios_scaleforsize(int32_t w)
+{
+    // only the sizes from the list: anything else (an old config, a desktop resolution) is full size
+    for (int const pct : ios_renderscales)
+    {
+        int32_t sw, sh;
+        ios_scaledsize(pct, &sw, &sh);
+        if (abs(sw - w) <= 2)
+            return pct;
+    }
+    return 100;
+}
+
+void ios_setrenderscale(SDL_Window *window, int pct)
+{
+    s_renderScale = clamp(pct, 25, 100);
+    @autoreleasepool
+    {
+        UIView *view = ios_gameview(window);
+        if (!view)
+            return;
+        CGFloat const want = view.window.screen.nativeScale * s_renderScale / 100.0;
+        if (want > 0 && fabs(view.contentScaleFactor - want) > 0.0001)
+        {
+            view.contentScaleFactor = want;
+            [view setNeedsLayout];
+            [view layoutIfNeeded];
+            printf("iOS GL view: render scale %d%% (contentScaleFactor %.3f)\n", s_renderScale, view.contentScaleFactor);
+        }
+    }
+}
+
+#ifdef USE_OPENGL
+//
+// gl4es glue: the engine talks desktop GL 2.1 to gl4es, gl4es talks GLES 2.0 to iOS.
+//
+
+// SDL renders into its own framebuffer object on iOS; "framebuffer 0" does not exist.
+// gl4es binds 0 whenever it means the window, so redirect that to SDL's FBO.
+static GLuint s_defaultFramebuffer;
+static void (*s_glBindFramebuffer)(GLenum, GLuint);
+static SDL_Window *s_glWindow;
+
+static void ios_bindFramebuffer(GLenum target, GLuint framebuffer)
+{
+    s_glBindFramebuffer(target, framebuffer ? framebuffer : s_defaultFramebuffer);
+}
+
+static void *ios_glesGetProcAddress(const char *name)
+{
+    if (!strcmp(name, "glBindFramebuffer") || !strcmp(name, "glBindFramebufferOES"))
+        return (void *)ios_bindFramebuffer;
+
+    return dlsym(RTLD_DEFAULT, name);
+}
+
+static void ios_getMainFBSize(int *width, int *height)
+{
+    SDL_GL_GetDrawableSize(s_glWindow, width, height);
+}
+
+int ios_initgl4es(SDL_Window *window)
+{
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+
+    if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_UIKIT)
+        return -1;
+
+    // Make sure the GL view renders at the panel's resolution (Retina, or the chosen part of it),
+    // not in points.
+    UIWindow *uiwindow = info.info.uikit.window;
+    UIView *view = uiwindow.rootViewController.view;
+    printf("iOS GL view: %s bounds %.0fx%.0f scale %.2f, screen nativeScale %.2f\n",
+           view ? object_getClassName(view) : "(none)", view.bounds.size.width, view.bounds.size.height,
+           view.contentScaleFactor, uiwindow.screen.nativeScale);
+    ios_setrenderscale(window, s_renderScale);
+
+    s_glWindow = window;
+    s_defaultFramebuffer = info.info.uikit.framebuffer;
+    s_glBindFramebuffer = (void (*)(GLenum, GLuint))dlsym(RTLD_DEFAULT, "glBindFramebuffer");
+
+    if (!s_glBindFramebuffer)
+        return -1;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, s_defaultFramebuffer);
+
+    static bool initialized;
+    if (!initialized)
+    {
+        // Polymost streams every polygon through glBufferSubData into one shared VBO (~200 updates
+        // a frame). Apple's GLES driver stalls on each update of a buffer the GPU is still reading,
+        // which held the game at ~10 fps, so keep buffers on the CPU side and let gl4es hand the
+        // driver plain client arrays, which it streams without waiting.
+        setenv("LIBGL_USEVBO", "0", 1);
+        set_getprocaddress(ios_glesGetProcAddress);
+        set_getmainfbsize(ios_getMainFBSize);
+        initialize_gl4es();
+        initialized = true;
+    }
+
+    return 0;
+}
+
+void *ios_glGetProcAddress(const char *name)
+{
+    return gl4es_GetProcAddress(name);
+}
+#endif
+
+//
+// GL crash guard
+//
+static char const kNoGLFile[] = "DISABLE_OPENGL.txt";
+static char const kGLStartingFile[] = ".opengl_starting";
+
+bool ios_glsafemode(void)
+{
+    if (access(kNoGLFile, F_OK) == 0)
+        return true;
+
+    if (access(kGLStartingFile, F_OK) == 0)
+    {
+        // the previous launch never got its first frames out with OpenGL
+        unlink(kGLStartingFile);
+
+        if (FILE *fp = fopen(kNoGLFile, "w"))
+        {
+            fputs(CHOSEN_GAME_NAME " crashed while starting its OpenGL renderer, so it now uses the software\n"
+                  "renderer (no true 3D look up/down). Delete this file to try OpenGL again.\n", fp);
+            fclose(fp);
+        }
+
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OpenGL renderer disabled",
+                                 CHOSEN_GAME_NAME " crashed while starting its OpenGL renderer last time, so it will use the "
+                                 "software renderer from now on.\n\nTo try OpenGL again, delete DISABLE_OPENGL.txt "
+                                 "in Files > On My iPad > " CHOSEN_GAME_NAME ".", NULL);
+        return true;
+    }
+
+    if (FILE *fp = fopen(kGLStartingFile, "w"))
+        fclose(fp);
+
+    return false;
+}
+
+void ios_glstartupok(void)
+{
+    unlink(kGLStartingFile);
+}
+
+static bool ios_havegamedata(void)
+{
+    return access(CHOSEN_GAME_DATAFILE, F_OK) == 0 || access(CHOSEN_GAME_DATAFILE_LOWER, F_OK) == 0 || access(CHOSEN_GAME_DATAFILE_MIXED, F_OK) == 0;
+}
+
+void ios_checkgamedata(void)
+{
+    while (!ios_havegamedata())
+    {
+        static SDL_MessageBoxButtonData const buttons[] =
+        {
+            { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Check again" },
+            { 0, 0, "Start anyway" },
+        };
+
+        SDL_MessageBoxData const data =
+        {
+            SDL_MESSAGEBOX_INFORMATION,
+            NULL,
+            CHOSEN_GAME_FILES " needed",
+            CHOSEN_GAME_DATAFILE " was not found.\n\n"
+            "Open the Files app, go to On My iPad > " CHOSEN_GAME_NAME " and copy everything from "
+            CHOSEN_GAME_SOURCES " into it.\n\n"
+            "Then come back here and tap \"Check again\".",
+            2,
+            buttons,
+            NULL
+        };
+
+        int choice = 0;
+        if (SDL_ShowMessageBox(&data, &choice) < 0 || choice != 1)
+            break;
+    }
+}
+
+// Must also run after SDL's app delegate has started: it changes the working
+// directory to the (read-only) app bundle in didFinishLaunchingWithOptions.
+void ios_setupdocuments(void)
+{
+    // Runs before the engine allocator exists, so stick to Foundation/libc here.
+    @autoreleasepool
+    {
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        if ([paths count] == 0)
+            return;
+        chdir([[paths objectAtIndex:0] fileSystemRepresentation]);
+    }
+
+    // Drop a readme so the folder shows up in Files right away and explains itself.
+    if (access(kReadmeName, F_OK) != 0)
+    {
+        if (FILE *fp = fopen(kReadmeName, "w"))
+        {
+            fputs(kReadmeText, fp);
+            fclose(fp);
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    @autoreleasepool
+    {
+        // Play audio like a game (not silenced by the ring/silent switch, mixes cleanly after interruptions).
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
+    }
+
+    ios_setupdocuments();
+
+    // Everything (game data, config, saves) lives in the Documents folder exposed in the Files app.
+    char **newargv = (char **)calloc(argc + 2, sizeof(char *));
+    int newargc = 0;
+
+    newargv[newargc++] = argv[0];
+    newargv[newargc++] = (char *)"-usecwd";
+
+    for (int i = 1; i < argc; i++)
+        newargv[newargc++] = argv[i];
+
+    newargv[newargc] = NULL;
+
+    return SDL_UIKitRunApp(newargc, newargv, eduke32_ios_main);
+}
