@@ -36,6 +36,7 @@ See the GNU General Public License for more details.
 char gOnlineServer[64];
 char gOnlineKey[48];
 char gOnlineLobby[25];
+char gOnlineLobbyPassword[25];
 int32_t gOnlineReportLan;
 int gOnlineMode;
 int32_t gChosenPlayers = 2;
@@ -64,6 +65,16 @@ static bool bNetGame;  // set up from the menu (the command line way stays as it
 const char *onlineVersion(void)
 {
     return CHOSEN_NAME " " CHOSEN_VERSION;
+}
+
+const char *onlineServerAddress(void)
+{
+#ifdef NOTBLOOD_WEB
+    // in a browser an empty SERVER means the server the page came from
+    return gOnlineServer;
+#else
+    return gOnlineServer[0] ? gOnlineServer : CHOSEN_PUBLIC_SERVER;
+#endif
 }
 
 const char *onlineStatusText(void)
@@ -104,6 +115,18 @@ static std::string cleanField(const char *pzText)
         if ((unsigned char)*p >= 32 && *p != '\t')
             s += *p;
     return s;
+}
+
+// the lobby password itself never leaves the machine: the server compares a hash (as NotBlood Chosen does)
+static std::string passwordHash(void)
+{
+    std::string pw = cleanField(gOnlineLobbyPassword);
+    if (pw.empty())
+        return "";
+    for (char &ch : pw)
+        ch = tolower((unsigned char)ch);
+    pw = "notblood-lobby:" + pw;
+    return relaySha256Hex(pw.data(), pw.size());
 }
 
 static const char *playerName(void)
@@ -165,7 +188,7 @@ template<typename F> static bool onlineWait(const char *pzText, int nTimeoutMs, 
 static bool onlineConnect(void)
 {
 #ifndef NOTBLOOD_WEB // in a browser no address means the server the page came from
-    if (!gOnlineServer[0])
+    if (!onlineServerAddress()[0])
     {
         onlineSetStatus("Enter the server address first");
         return false;
@@ -173,9 +196,9 @@ static bool onlineConnect(void)
 #endif
     if (relayStatus() == kRelayOnline)
         return true;
-    relayConnect(gOnlineServer, gOnlineKey, onlineVersion());
+    relayConnect(onlineServerAddress(), gOnlineKey, onlineVersion());
     char buffer[128];
-    Bsnprintf(buffer, sizeof(buffer), "Connecting to %s", gOnlineServer[0] ? gOnlineServer : "the server");
+    Bsnprintf(buffer, sizeof(buffer), "Connecting to %s", onlineServerAddress()[0] ? onlineServerAddress() : "the server");
     if (!onlineWait(buffer, 15000, []() { return relayStatus() == kRelayOnline; }))
     {
         relayClose();
@@ -216,7 +239,7 @@ static bool onlineHostLobby(int nPlayers)
         return false;
     lobbyNameFor(zLobbyName, sizeof(zLobbyName));
     std::string cmd = std::string("host\t") + zLobbyName + "\t" + std::to_string(nPlayers) + "\t" + cleanField(playerName()) +
-        "\t" + cleanField(modName()) + "\t" + onlineVersion();
+        "\t" + cleanField(modName()) + "\t" + onlineVersion() + "\t" + passwordHash();
     relaySendText(cmd.c_str());
     char reply[512];
     if (!onlineReply("Creating the lobby", reply, sizeof(reply), "hosted"))
@@ -260,8 +283,10 @@ int chosenListLobbies(CHOSENLISTENTRY *pList, int nMax)
         std::string state = msgField(line.c_str(), 4);
         CHOSENLISTENTRY *pEntry = &pList[nCount];
         Bstrncpyz(pEntry->szName, msgField(line.c_str(), 0).c_str(), sizeof(pEntry->szName));
-        Bsnprintf(pEntry->szInfo, sizeof(pEntry->szInfo), "%s  %s/%s%s", msgField(line.c_str(), 1).c_str(), msgField(line.c_str(), 2).c_str(),
-            msgField(line.c_str(), 3).c_str(), state == "waiting" ? "" : "  PLAYING");
+        // newer servers add: bots private user-map
+        bool const bLocked = msgField(line.c_str(), 8) == "1";
+        Bsnprintf(pEntry->szInfo, sizeof(pEntry->szInfo), "%s  %s/%s%s%s", msgField(line.c_str(), 1).c_str(), msgField(line.c_str(), 2).c_str(),
+            msgField(line.c_str(), 3).c_str(), state == "waiting" ? "" : "  PLAYING", bLocked ? "  LOCKED" : "");
         pEntry->szAddress[0] = 0;
         pEntry->nPort = 0;
         nCount++;
@@ -419,7 +444,7 @@ bool chosenJoinLobby(const char *pzLobby)
     if (!onlineConnect())
         return false;
     std::string cmd = std::string("join\t") + cleanField(pzLobby) + "\t" + cleanField(playerName()) + "\t" +
-        cleanField(modName()) + "\t" + onlineVersion();
+        cleanField(modName()) + "\t" + onlineVersion() + "\t" + passwordHash();
     relaySendText(cmd.c_str());
     char reply[512];
     if (!onlineReply("Joining the lobby", reply, sizeof(reply), "joined"))

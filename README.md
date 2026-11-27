@@ -11,7 +11,7 @@ Unzip, put your `SW.GRP` next to the game and start it. Shadow Warrior Classic C
   * **PLAYERS**: how many play (2-8). Shadow Warrior's network game waits until all of them are there.
   * **HOST LAN GAME**: waits for the players, then the NETWORK GAME screen: game type (WangBang, co-op, ...), level, limits, START GAME.
   * **FIND LAN GAMES**: the games waiting on your network; pick one to join.
-  * **ONLINE**: your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through your own relay server ([SERVER.md](SERVER.md)).
+  * **ONLINE**: your server's address and key, then **HOST A LOBBY** or **FIND LOBBIES**. No port forwarding: the game traffic goes through a relay server: the public one, sw.pi-mole.com (leave SERVER empty), or your own ([SERVER.md](SERVER.md)). Lobbies can have a password.
   * **LEAVE NETWORK GAME**.
 * **Live dashboard** in the browser: lobbies, players' health, armor, weapons, keys, a live level map and an event list.
 * **Touch devices** (Android, iPad, phones and tablets in the browser): on-screen stick, finger look, fire/jump/duck/use buttons, a weapon picker, gyro aiming, a layout editor; the buttons hide while a controller is connected.
@@ -19,7 +19,7 @@ Unzip, put your `SW.GRP` next to the game and start it. Shadow Warrior Classic C
 * **macOS** app for Apple Silicon and Intel, **Android** keeps everything in the `ShadowWarrior` folder of the main storage, **iPad** in Files > On My iPad > SW Chosen.
 * Engine fixes for network games set up after the start (a second network setup reused the old socket and a stale "ready" flag).
 
-Building: `.github/workflows/release.yml` (all platforms), `platform/Android`, `platform/iOS`, `platform/Web`; on Linux `make sw`. The relay server is in `server/` ([SERVER.md](SERVER.md)).
+Building: `.github/workflows/release.yml` (all platforms), `platform/Android`, `platform/iOS`, `platform/Web`; on Linux `make sw`. The relay server is NotBlood Chosen's `server/` with `SITE=sw` ([SERVER.md](SERVER.md)); the public one is sw.pi-mole.com.
 
 ## Acknowledgments
 

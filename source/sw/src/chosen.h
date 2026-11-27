@@ -22,7 +22,12 @@ See the GNU General Public License for more details.
 #include "compat.h"
 
 #define CHOSEN_NAME "SW Chosen"
-#define CHOSEN_VERSION "1.0"
+#define CHOSEN_VERSION "1.1"
+
+// the public server ONLINE uses when SERVER is left empty (its page: live games and the web version)
+#ifndef CHOSEN_PUBLIC_SERVER
+#define CHOSEN_PUBLIC_SERVER "sw.pi-mole.com"
+#endif
 
 enum
 {
@@ -35,8 +40,11 @@ enum
 extern char gOnlineServer[64];
 extern char gOnlineKey[48];
 extern char gOnlineLobby[25];
+extern char gOnlineLobbyPassword[25];  // a private lobby: players need the same password
 extern int32_t gOnlineReportLan;  // show hosted LAN games on the dashboard
 extern int gOnlineMode;
+// the server to use: SERVER from the menu, else the public one
+const char *onlineServerAddress(void);
 extern int32_t gChosenPlayers;    // how many players a hosted game waits for (2-8)
 
 const char *onlineVersion(void);

@@ -643,6 +643,7 @@ static char *MNU_ChosenField(int nField, int *pSize)
     {
     case 0: *pSize = sizeof(gOnlineServer); return gOnlineServer;
     case 1: *pSize = sizeof(gOnlineKey); return gOnlineKey;
+    case 3: *pSize = sizeof(gOnlineLobbyPassword); return gOnlineLobbyPassword;
     default: *pSize = sizeof(gOnlineLobby); return gOnlineLobby;
     }
 }
@@ -682,10 +683,12 @@ SWBOOL MNU_ChosenMpDraw(UserCall UNUSED(call), MenuItem_p UNUSED(item))
 SWBOOL MNU_ChosenOnlineDraw(UserCall UNUSED(call), MenuItem_p UNUSED(item))
 {
     signed char MNU_InputString(char *, short);
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
     {
         int nSize;
         char const *pzValue = MNU_ChosenField(i, &nSize);
+        if (i == 0 && !pzValue[0] && !(MenuInputMode && i == s_chosenEditField))
+            pzValue = CHOSEN_PUBLIC_SERVER " (public)";
         if (MenuInputMode && i == s_chosenEditField)
             pzValue = s_chosenEditBuffer;
         char shown[80];
@@ -761,9 +764,10 @@ MenuItem chosenonline_i[] =
     {DefOption(0, "Server"), OPT_XS, OPT_LINE(0), 1, m_defshade, 0, MNU_ChosenEdit, NULL, NULL},
     {DefOption(0, "Key"), OPT_XS, OPT_LINE(1), 1, m_defshade, 0, MNU_ChosenEdit, NULL, NULL},
     {DefOption(0, "Lobby Name"), OPT_XS, OPT_LINE(2), 1, m_defshade, 0, MNU_ChosenEdit, NULL, NULL},
-    {DefOption(0, s_chosenPlayersText), OPT_XS, OPT_LINE(4), 1, m_defshade, 0, MNU_ChosenPlayers, NULL, NULL},
-    {DefOption(0, "Host a Lobby"), OPT_XS, OPT_LINE(5), 1, m_defshade, 0, MNU_ChosenHostOnline, NULL, NULL},
-    {DefLayer(0, "Find Lobbies", &chosenlistgroup), OPT_XS, OPT_LINE(6), 1, m_defshade, 0, MNU_ChosenFindLobbies, NULL, NULL},
+    {DefOption(0, "Password"), OPT_XS, OPT_LINE(3), 1, m_defshade, 0, MNU_ChosenEdit, NULL, NULL},
+    {DefOption(0, s_chosenPlayersText), OPT_XS, OPT_LINE(5), 1, m_defshade, 0, MNU_ChosenPlayers, NULL, NULL},
+    {DefOption(0, "Host a Lobby"), OPT_XS, OPT_LINE(6), 1, m_defshade, 0, MNU_ChosenHostOnline, NULL, NULL},
+    {DefLayer(0, "Find Lobbies", &chosenlistgroup), OPT_XS, OPT_LINE(7), 1, m_defshade, 0, MNU_ChosenFindLobbies, NULL, NULL},
     {DefNone}
 };
 MenuGroup chosenonlinegroup = {65, 5, "^Online", chosenonline_i, pic_newgametitl, 0, m_defshade, MNU_ChosenOnlineDraw, NULL, 0};
