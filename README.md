@@ -9,6 +9,7 @@ Unzip, put your `SW.GRP` next to the game and start it. Shadow Warrior Classic C
 **What SW Chosen adds to VoidSW**
 * **MULTIPLAYER** in the main menu (until now network games needed command line options):
   * **PLAY WITH BOTS**: WangBang against up to 7 computer players (4 difficulties), offline.
+  * **Bots in network games**: the host's *Other Options* have *Bots* and *Bot Skill*; the host plays the bots, so LAN games and online lobbies (public or with the server key) can mix people and bots. Everybody sees them as players, the lobby list counts them and the website's live view shows them. Command line: `-hostbotsN`, `-botskillN` (0-3).
   * **PLAYERS**: how many play (2-8). Shadow Warrior's network game waits until all of them are there.
   * **HOST LAN GAME**: waits for the players, then the NETWORK GAME screen: game type (WangBang, co-op, ...), level, limits, START GAME.
   * **FIND LAN GAMES**: the games waiting on your network; pick one to join.

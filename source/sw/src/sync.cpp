@@ -452,6 +452,8 @@ GetSyncInfoFromPacket(uint8_t *packbuf, int packbufleng, int *j, int otherconnec
     // if any of the syncstat vars is non-0 then there is a problem
     TRAVERSE_CONNECT(i)
     {
+        if (Player[i].IsAI)
+            continue;  // SW Chosen: bots send nothing (the host plays them)
         if (Player[i].syncvalhead == syncvaltottail)
             return;
     }
@@ -463,6 +465,8 @@ GetSyncInfoFromPacket(uint8_t *packbuf, int packbufleng, int *j, int otherconnec
     {
         for (i = connectpoint2[connecthead]; i >= 0; i = connectpoint2[i])
         {
+            if (Player[i].IsAI)
+                continue;
             for (sb = 0; sb < NumSyncBytes; sb++)
             {
                 if (Player[i].syncval[syncvaltottail & (SYNCFIFOSIZ - 1)][sb] != Player[connecthead].syncval[syncvaltottail & (SYNCFIFOSIZ - 1)][sb])
@@ -476,6 +480,8 @@ GetSyncInfoFromPacket(uint8_t *packbuf, int packbufleng, int *j, int otherconnec
 
         TRAVERSE_CONNECT(i)
         {
+            if (Player[i].IsAI)
+                continue;
             if (Player[i].syncvalhead == syncvaltottail)
                 return;
         }

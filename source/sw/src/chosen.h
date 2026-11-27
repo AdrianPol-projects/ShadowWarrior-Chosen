@@ -22,7 +22,7 @@ See the GNU General Public License for more details.
 #include "compat.h"
 
 #define CHOSEN_NAME "SW Chosen"
-#define CHOSEN_VERSION "1.1"
+#define CHOSEN_VERSION "1.2"
 
 // the public server ONLINE uses when SERVER is left empty (its page: live games and the web version)
 #ifndef CHOSEN_PUBLIC_SERVER

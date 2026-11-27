@@ -416,6 +416,10 @@ MenuGroup episodegroup = {100, 5, "^Episode", episode_i, pic_newgametitl, 0, m_d
 
 extern char UserMapName[80];
 
+SWBOOL MNU_ChosenBotsDraw(UserCall call, MenuItem_p item);
+static SWBOOL MNU_ChosenNetBots(void);
+static SWBOOL MNU_ChosenBotSkill(void);
+extern char s_netBotsText[], s_netBotSkillText[];
 MenuItem network_extra_i[] =
 {
     {DefSlider(sldr_monsters, 0, "Monsters"),OPT_XS, OPT_LINE(0), 1, m_defshade, 0, NULL, NULL, NULL},
@@ -424,10 +428,13 @@ MenuItem network_extra_i[] =
     {DefButton(btn_teamplay,     0, "Team Play"),    OPT_XS, OPT_LINE(1), 1, m_defshade, 0, MNU_TeamPlayChange, MNU_TeamPlayCheck, NULL},
     {DefButton(btn_friendlyfire, 0, "Hurt Teammate"),OPT_XS, OPT_LINE(2), 1, m_defshade, 0, NULL, MNU_HurtTeammateCheck, NULL},
     {DefButton(btn_nuke,         0, "Play with Nuke"),OPT_XS, OPT_LINE(3), 1, m_defshade, 0, NULL, NULL, NULL},
+    // SW Chosen: bots in the network game (the host plays them)
+    {DefOption(0, s_netBotsText), OPT_XS, OPT_LINE(5), 1, m_defshade, 0, MNU_ChosenNetBots, NULL, NULL},
+    {DefOption(0, s_netBotSkillText), OPT_XS, OPT_LINE(6), 1, m_defshade, 0, MNU_ChosenBotSkill, NULL, NULL},
     {DefNone}
 };
 
-MenuGroup networkextragroup = {50, 5, "^Net Options", network_extra_i, pic_newgametitl, 0, m_defshade, NULL, NULL, 0};
+MenuGroup networkextragroup = {50, 5, "^Net Options", network_extra_i, pic_newgametitl, 0, m_defshade, MNU_ChosenBotsDraw, NULL, 0};
 
 MenuItem network_i[] =
 {
@@ -532,12 +539,16 @@ int32_t gSwBotCount = 3;   // computer players
 int32_t gSwBotSkill = 1;   // 0 easy .. 3 insane (jplayer.cpp: computergetinput)
 static int32_t s_botLevel = 1;
 static char s_botCountText[32], s_botSkillText[40], s_botLevelText[64];
+int32_t gSwNetBots = 0;    // bots in a network game this machine hosts
+char s_netBotsText[32], s_netBotSkillText[40];
 static const char *const kBotSkillNames[] = { "Easy", "Normal", "Hard", "Insane" };
 
 static void MNU_ChosenBotsText(void)
 {
     Bsnprintf(s_botCountText, sizeof(s_botCountText), "Bots: %d", gSwBotCount);
     Bsnprintf(s_botSkillText, sizeof(s_botSkillText), "Difficulty: %s", kBotSkillNames[clamp(gSwBotSkill, 0, 3)]);
+    Bsnprintf(s_netBotsText, sizeof(s_netBotsText), "Bots: %d", gSwNetBots);
+    Bsnprintf(s_netBotSkillText, sizeof(s_netBotSkillText), "Bot Skill: %s", kBotSkillNames[clamp(gSwBotSkill, 0, 3)]);
     char const *pzDesc = LevelInfo[s_botLevel].Description;
     Bsnprintf(s_botLevelText, sizeof(s_botLevelText), "Level: %s", pzDesc && pzDesc[0] ? pzDesc : LevelInfo[s_botLevel].LevelName);
 }
@@ -547,6 +558,39 @@ static SWBOOL MNU_ChosenBotCount(void)
     gSwBotCount = gSwBotCount >= MAX_SW_PLAYERS - 1 ? 1 : gSwBotCount + 1;
     MNU_ChosenBotsText();
     return TRUE;
+}
+
+static SWBOOL MNU_ChosenNetBots(void)
+{
+    gSwNetBots = gSwNetBots >= MAX_SW_PLAYERS - 1 ? 0 : gSwNetBots + 1;
+    MNU_ChosenBotsText();
+    return TRUE;
+}
+
+// the bots leave (a new game alone, a network game, another bot match)
+void chosenDropBots(void)
+{
+    int const nPeople = CommEnabled ? max<int>(CommPlayers, 1) : 1;
+    for (int i = nPeople; i < MAX_SW_PLAYERS; i++)
+        Player[i].IsAI = FALSE;
+    if (numplayers > nPeople)
+    {
+        numplayers = nPeople;
+        connectpoint2[nPeople - 1] = -1;
+    }
+}
+
+// a network game's bots (the host's choice; the same on every machine)
+void chosenNetBots(int nBots, int nSkill)
+{
+    extern SWBOOL BotMode;
+    chosenDropBots();
+    nBots = clamp(nBots, 0, MAX_SW_PLAYERS - max<int>(CommPlayers, 1));
+    BotMode = nBots > 0;
+    FakeMultiNumPlayers = nBots;
+    gSwBotSkill = clamp(nSkill, 0, 3);
+    if (nBots)
+        LOG_F(INFO, "Network game: %d bots (%s)", nBots, kBotSkillNames[gSwBotSkill]);
 }
 
 static SWBOOL MNU_ChosenBotSkill(void)
@@ -569,6 +613,7 @@ static SWBOOL MNU_ChosenBotLevel(void)
 static SWBOOL MNU_ChosenBotsStart(void)
 {
     extern SWBOOL BotMode;
+    chosenDropBots();
     FakeMultiNumPlayers = clamp(gSwBotCount, 1, MAX_SW_PLAYERS - 1);
     BotMode = TRUE;
     gNet.MultiGameType = MULTI_GAME_AI_BOTS;
@@ -583,6 +628,8 @@ static SWBOOL MNU_ChosenBotsStart(void)
     LOG_F(INFO, "Bot match: %d bots (%s), level %d", FakeMultiNumPlayers, kBotSkillNames[clamp(gSwBotSkill, 0, 3)], Level);
     return TRUE;
 }
+
+void chosenTestStartBots(void) { MNU_ChosenBotsStart(); }  // SW_CHOSEN_TEST=bots
 
 SWBOOL MNU_ChosenBotsDraw(UserCall UNUSED(call), MenuItem_p UNUSED(item))
 {
@@ -2155,6 +2202,7 @@ MNU_StartGame(void)
         extern SWBOOL BotMode;
         if (BotMode)  // a new game is played alone again
         {
+            chosenDropBots();
             BotMode = FALSE;
             FakeMultiNumPlayers = 0;
             gNet.MultiGameType = MULTI_GAME_NONE;
@@ -2269,6 +2317,9 @@ MNU_StartNetGame(void)
         p.KillLimit = gs.NetKillLimit;
         p.TimeLimit = gs.NetTimeLimit;
         p.Nuke = gs.NetNuke;
+        p.Bots = clamp(gSwNetBots, 0, MAX_SW_PLAYERS - max<int>(CommPlayers, 1));
+        p.BotSkill = clamp(gSwBotSkill, 0, 3);
+        chosenNetBots(p.Bots, p.BotSkill);  // the host plays them
 
         netbroadcastpacket((uint8_t*)(&p), sizeof(p));            // TENSW
     }

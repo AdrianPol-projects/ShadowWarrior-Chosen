@@ -74,6 +74,8 @@ typedef struct
     uint8_t KillLimit;
     uint8_t TimeLimit;
     SWBOOL Nuke;
+    uint8_t Bots;      // SW Chosen: computer players the host plays (after the people)
+    uint8_t BotSkill;
 } PACKET_NEW_GAME,*PACKET_NEW_GAMEp;
 
 typedef struct

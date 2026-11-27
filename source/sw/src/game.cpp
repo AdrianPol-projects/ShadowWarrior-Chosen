@@ -1371,18 +1371,18 @@ InitLevel(void)
     }
 #endif
 
-    // Put in the BOTS if called for
+    // Put in the BOTS if called for (SW Chosen: after the people of a network game too, and only once:
+    // the next level keeps them)
     if (FakeMultiNumPlayers && BotMode)
     {
-        uint8_t i;
-
-        // insert all needed players except the first one - its already tere
-        for (i = 0; i < FakeMultiNumPlayers; i++)
+        int const nPeople = CommEnabled ? CommPlayers : 1;
+        short const nMe = myconnectindex;
+        while (numplayers < min<int>(nPeople + FakeMultiNumPlayers, MAX_SW_PLAYERS))
         {
             BotPlayerInsert(Player);
-            // reset control back to 1st player
-            myconnectindex = 0;
-            screenpeek = 0;
+            // reset control back to the player of this machine
+            myconnectindex = nMe;
+            screenpeek = nMe;
         }
     }
 
@@ -3643,6 +3643,18 @@ int32_t app_main(int32_t argc, char const * const * argv)
             }
         }
         else
+        // SW Chosen: bots in the network game this machine hosts (-hostbotsN), and their skill (-botskillN, 0-3)
+        if (Bstrncasecmp(arg, "hostbots", 8) == 0 && strlen(arg) > 8)
+        {
+            extern int32_t gSwNetBots;
+            gSwNetBots = clamp(atoi(&arg[8]), 0, MAX_SW_PLAYERS - 1);
+        }
+        else if (Bstrncasecmp(arg, "botskill", 8) == 0 && strlen(arg) > 8)
+        {
+            extern int32_t gSwBotSkill;
+            gSwBotSkill = clamp(atoi(&arg[8]), 0, 3);
+        }
+        else
         // SW Chosen: the bots are back (-botsN), see swbots in jplayer.cpp
         if (Bstrncasecmp(arg, "bots", 4) == 0 && strlen(arg) > 4)
         {
@@ -3944,7 +3956,9 @@ BotPlayerInsert(PLAYERp pp)
         //myconnectindex = numplayers;
         //screenpeek = numplayers;
 
-        sprintf(Player[numplayers].PlayerName,"BOT %d",numplayers+1);
+        // SW Chosen: a name (the same on every machine of a network game)
+        static const char *const kBotNames[] = { "Hiro", "Kenji", "Lo Wang Jr", "Masako", "Ronin", "Shadow", "Tetsuo", "Yuki" };
+        Bsnprintf(Player[numplayers].PlayerName, sizeof(Player[numplayers].PlayerName), "%s", kBotNames[numplayers % 8]);
 
         Player[numplayers].movefifoend = Player[0].movefifoend;
 

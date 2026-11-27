@@ -478,6 +478,9 @@ bool chosenJoinLobby(const char *pzLobby)
     return true;
 }
 
+void chosenNetBots(int nBots, int nSkill);
+extern int32_t gSwBotSkill;
+
 void chosenLeaveGame(void)
 {
     if (bNetGame || numplayers > 1)
@@ -491,6 +494,7 @@ void chosenLeaveGame(void)
         screenpeek = myconnectindex = 0;
     }
     bNetGame = false;
+    chosenNetBots(0, gSwBotSkill);  // the bots go with the game
     if (bAdvertising)
         lanAdvertiseStop();
     bAdvertising = false;
@@ -657,8 +661,73 @@ static void buildMap(std::string &s)
     s += "]";
 }
 
+// SW_CHOSEN_TEST=host (a LAN game; starts the level when everybody is there) or join:<address> - for tests
+static void chosenTestHook(void)
+{
+    static int nState;
+    char const *pzTest = getenv("SW_CHOSEN_TEST");
+    if (!pzTest || timerGetTicks() < 4000)
+        return;
+    // every 15 seconds of play: everybody's kills and where they are (the same on every machine when in sync)
+    extern SWBOOL InMenuLevel;
+    extern int PlayClock;
+    static uint32_t nNextLog;
+    if (!InMenuLevel && numsectors > 0 && Player[myconnectindex].PlayerSprite >= 0 && timerGetTicks() >= nNextLog)
+    {
+        if (nNextLog)
+        {
+            char line[400];
+            int n = Bsnprintf(line, sizeof(line), "Test players (clock %d):", (int)PlayClock);
+            for (int i = connecthead; i >= 0 && n < 360; i = connectpoint2[i])
+                n += Bsnprintf(line + n, sizeof(line) - n, " %s%s kills %d at %d,%d;", Player[i].PlayerName, Player[i].IsAI ? "(bot)" : "",
+                               Player[i].Kills, Player[i].posx >> 4, Player[i].posy >> 4);
+            LOG_F(INFO, "%s", line);
+            for (int i = connecthead; i >= 0; i = connectpoint2[i])
+                if (Player[i].IsAI)
+                {
+                    SW_PACKET const &in = Player[i].inputfifo[(Player[i].movefifoend - 1) & (MOVEFIFOSIZ - 1)];
+                    LOG_F(INFO, "Test bot %d: ang %d (input %d) vel %d svel %d angvel %d bits %x, fifo %d (mine %d, played %d)", i,
+                          fix16_to_int(Player[i].q16ang), fix16_to_int(in.q16ang), in.vel, in.svel, fix16_to_int(in.q16angvel), in.bits,
+                          Player[i].movefifoend, Player[myconnectindex].movefifoend, movefifoplc);
+                }
+        }
+        nNextLog = timerGetTicks() + (getenv("SW_CHOSEN_TEST_LOGMS") ? atoi(getenv("SW_CHOSEN_TEST_LOGMS")) : 15000);
+    }
+    if (nState < 0)
+        return;
+    if (char const *pzDelay = getenv("SW_CHOSEN_TEST_DELAY"))
+        if ((int)timerGetTicks() < atoi(pzDelay))
+            return;
+    if (nState == 0)
+    {
+        nState = 1;
+        if (!strcmp(pzTest, "host"))
+            nState = chosenHostGame(false) ? 2 : -1;
+        else if (!strcmp(pzTest, "bots"))
+        {
+            void chosenTestStartBots(void);
+            chosenTestStartBots();
+            nState = -1;
+        }
+        else if (!strncmp(pzTest, "join:", 5))
+        {
+            chosenJoinAddress(pzTest + 5);
+            nState = -1;
+        }
+        LOG_F(INFO, "Test: %s (%d)", pzTest, nState);
+    }
+    else if (nState == 2)
+    {
+        nState = -1;
+        SWBOOL MNU_StartNetGame(void);
+        MNU_StartNetGame();
+    }
+}
+
 void chosenFrame(void)
 {
+    chosenTestHook();
+
     if (bAdvertising)
     {
         lanAdvertiseUpdate(playerName(), onlineVersion(), modName(), kGamePort, numplayers, gChosenPlayers);
@@ -714,6 +783,16 @@ void chosenFrame(void)
     {
         relaySendText("state\tplaying");
         bPlaying = true;
+    }
+    // the lobby list counts the bots apart from the people
+    static int nBotsSent = -1;
+    int nBots = 0;
+    for (int i = connecthead; i >= 0; i = connectpoint2[i])
+        nBots += Player[i].IsAI ? 1 : 0;
+    if (nBots != nBotsSent)
+    {
+        nBotsSent = nBots;
+        relaySendText(("bots\t" + std::to_string(nBots)).c_str());
     }
 
     char mapId[64];

@@ -419,7 +419,7 @@ extern int32_t gSwBotSkill;
 static int botReaction[MAX_SW_PLAYERS_REG];    // calls left before shooting at a newly seen enemy
 static int botLastGoal[MAX_SW_PLAYERS_REG];
 
-void computergetinput(int snum, SW_PACKET *syn)
+static void computergetinput_think(int snum, SW_PACKET *syn)
 {
     short const Skill = (short)clamp(gSwBotSkill, 0, 3);  // the bots' own difficulty, not the monsters'
     int i, j, k, l, x1, y1, z1, x2, y2, z2, dx, dy, nextj;
@@ -917,4 +917,30 @@ void computergetinput(int snum, SW_PACKET *syn)
             syn->q16angvel = fix16_from_int(min(max((((daang+1024-damyang)&2047)-1024)>>3,-MAXANGVEL),MAXANGVEL));
         }
     */
+}
+
+// SW Chosen: the bot's input as a player's: the way it wants to face and aim goes in the input (the game
+// takes the angle from the input), the player itself is left alone - a network game plays it the same
+// on every machine. Called every 4th tic; the input is kept in between (network.cpp: BotInput).
+void computergetinput(int snum, SW_PACKET *syn)
+{
+    int const kTurnScale = 12;  // player.cpp: PLAYER_TURN_SCALE
+    PLAYERp p = &Player[snum];
+    fix16_t const q16Ang = p->q16ang, q16Horiz = p->q16horiz;
+    syn->q16ang = q16Ang;
+    syn->q16horiz = q16Horiz;
+    computergetinput_think(snum, syn);
+    fix16_t q16Want = p->q16ang;  // the fighting code turns the player itself
+    p->q16ang = q16Ang;
+    p->q16horiz = q16Horiz;
+    // walking somewhere: the turn it asked for, over the 4 tics the input is kept
+    if (syn->q16angvel)
+    {
+        fix16_t v = fix16_smul(syn->q16angvel, fix16_from_int(kTurnScale));
+        v += fix16_sdiv(v, fix16_from_int(4));
+        q16Want += fix16_sdiv(fix16_mul(v, fix16_from_int(synctics * 4)), fix16_from_int(32));
+    }
+    syn->q16ang = NORM_Q16ANGLE(q16Want);
+    syn->q16horiz = fix16_clamp(fix16_sadd(q16Horiz, fix16_smul(syn->q16aimvel, fix16_from_int(2))), fix16_from_int(PLAYER_HORIZ_MIN),
+                                fix16_from_int(PLAYER_HORIZ_MAX));
 }

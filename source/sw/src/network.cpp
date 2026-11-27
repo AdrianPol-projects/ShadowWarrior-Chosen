@@ -136,6 +136,9 @@ void netsendpacket(int ind, uint8_t* buf, int len)
     uint8_t bbuf[sizeof(packbuf) + sizeof(PACKET_PROXY)];
     PACKET_PROXYp prx = (PACKET_PROXYp)bbuf;
 
+    if ((unsigned)ind < MAX_SW_PLAYERS && Player[ind].IsAI)
+        return;  // SW Chosen: a bot has no connection
+
     // send via master if in M/S mode and we are not the master, and the recipient is not the master and not ourselves
     if (!NetBroadcastMode && myconnectindex != connecthead && ind != myconnectindex && ind != connecthead)
     {
@@ -204,7 +207,7 @@ void netbroadcastpacket(uint8_t* buf, int len)
 
     for (i = connecthead; i >= 0; i = connectpoint2[i])
     {
-        if (i == myconnectindex) continue;
+        if (i == myconnectindex || Player[i].IsAI) continue;  // SW Chosen: bots have no connection
         sendpacket(i, buf, len);
 #ifdef NET_DEBUG_MSGS
         buildprintf("netsendpacket() sends normal to %d\n",i);
@@ -262,7 +265,7 @@ int netgetpacket(int *ind, uint8_t* buf)
             // Transmit to all the other players except ourselves and the sender
             for (i = connecthead; i >= 0; i = connectpoint2[i])
             {
-                if (i == myconnectindex || i == *ind) continue;
+                if (i == myconnectindex || i == *ind || Player[i].IsAI) continue;
 #ifdef NET_DEBUG_MSGS
                 buildprintf("netgetpacket(): distributing to %d\n", i);
 #endif
@@ -577,7 +580,7 @@ CheckVersion(int GameVersion)
 
     TRAVERSE_CONNECT(pnum)
     {
-        if (pnum != myconnectindex)
+        if (pnum != myconnectindex && !Player[pnum].IsAI)  // SW Chosen: bots are this game
         {
             if (GameVersion != Player[pnum].PlayerVersion)
             {
@@ -714,6 +717,8 @@ waitforeverybody(void)
 
         for (i = connecthead; i >= 0; i = connectpoint2[i])
         {
+            if (Player[i].IsAI)
+                continue;  // SW Chosen: bots are always ready
             if (Player[i].playerreadyflag < Player[myconnectindex].playerreadyflag)
                 break;
             if ((!NetBroadcastMode) && (myconnectindex != connecthead)) { i = -1; break; } //slaves in M/S mode only wait for master
@@ -970,6 +975,43 @@ AddSyncInfoToPacket(int *j)
 
 void faketimerhandler(void) { ; }
 
+void computergetinput(int snum, SW_PACKET *syn);
+void chosenNetBots(int nBots, int nSkill);
+
+// SW Chosen: a bot's input for its next tic: it thinks every 4th tic, in between it keeps its input
+static void BotInput(int i)
+{
+    PLAYERp bp = Player + i;
+    SW_PACKET *pIn = &bp->inputfifo[bp->movefifoend & (MOVEFIFOSIZ - 1)];
+    if ((bp->movefifoend & 3) == 0)
+    {
+        SWBOOL const bWas = MoveSkip4;
+        MoveSkip4 = TRUE;
+        computergetinput(i, pIn);
+        MoveSkip4 = bWas;
+    }
+    else
+        *pIn = bp->inputfifo[(bp->movefifoend - 1) & (MOVEFIFOSIZ - 1)];
+    bp->movefifoend++;
+}
+
+// SW Chosen: a network game's bots: the master (the host) plays them, in step with its own input,
+// and sends their input with everybody's (MASTER_TO_SLAVE); the others get it like a player's
+static void NetBotInputs(void)
+{
+    if (!CommEnabled || NetBroadcastMode || myconnectindex != connecthead)
+        return;
+    int i;
+    TRAVERSE_CONNECT(i)
+    {
+        PLAYERp bp = Player + i;
+        if (!bp->IsAI)
+            continue;
+        while (bp->movefifoend < Player[myconnectindex].movefifoend)
+            BotInput(i);
+    }
+}
+
 void
 UpdateInputs(void)
 {
@@ -1010,6 +1052,7 @@ UpdateInputs(void)
                sizeof(SW_PACKET));
 
         pp->movefifoend++;
+        NetBotInputs();
         return;
     }
 
@@ -1026,6 +1069,7 @@ UpdateInputs(void)
     pp->inputfifo[Player[myconnectindex].movefifoend & (MOVEFIFOSIZ - 1)] = loc;
     pp->movefifoend++;
     Bmemset(&loc, 0, sizeof(loc));
+    NetBotInputs();
 
 #if 0
 //  AI Bot stuff
@@ -1056,12 +1100,12 @@ UpdateInputs(void)
             if (i != myconnectindex)
             {
                 if (BotMode && Player[i].IsAI == 1)
-                {
-                    computergetinput(i,&Player[i].inputfifo[Player[i].movefifoend&(MOVEFIFOSIZ-1)]);
-                }
+                    BotInput(i);
                 else
+                {
                     memset(&Player[i].inputfifo[Player[i].movefifoend & (MOVEFIFOSIZ - 1)], 0, sizeof(Player[i].inputfifo[0]));
-                Player[i].movefifoend++;
+                    Player[i].movefifoend++;
+                }
             }
         }
         return;
@@ -1271,6 +1315,8 @@ UpdateInputs(void)
         for (i = connectpoint2[connecthead]; i >= 0; i = connectpoint2[i])
         /* if (!playerquitflag[i])*/
         {
+            if (Player[i].IsAI)
+                continue;  // SW Chosen: a bot (played here)
             netsendpacket(i, packbuf, j);
             /*
             pp = Player + i;
@@ -1536,6 +1582,7 @@ getpackets(void)
 
             gNet.TimeLimitClock = gNet.TimeLimit;
             gNet.MultiGameType = p->GameType+1;
+            chosenNetBots(p->Bots, p->BotSkill);  // SW Chosen: the host's bots
 
             // settings for No Respawn Commbat mode
             if (gNet.MultiGameType == MULTI_GAME_COMMBAT_NO_RESPAWN)
