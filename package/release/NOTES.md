@@ -20,6 +20,7 @@ Everybody in a network game needs **1.1**.
 
 
 ## New in 1.1
+- **PLAY WITH BOTS** in MULTIPLAYER: WangBang against up to 7 computer players on the level you pick, 4 difficulties. The bots are Shadow Warrior's own (switched off in VoidSW), back and better: they turn and react like players instead of snapping onto you, shoot more or less often by difficulty, keep their distance by weapon, dodge rockets and respawn after a second.
 - **Public server sw.pi-mole.com**: leave SERVER empty in ONLINE and host or join right away; https://sw.pi-mole.com shows the games live and has the web version.
 - **Private lobbies**: fill in the lobby password before HOST A LOBBY; players type the same one to join (upper and lower case don't matter). The lobby list shows LOCKED.
 - **Sound on iPad/iPhone** in the web version, also in silent mode.

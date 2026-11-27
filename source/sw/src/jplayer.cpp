@@ -414,8 +414,14 @@ static int goalplayer[MAX_SW_PLAYERS_REG], clipmovecount[MAX_SW_PLAYERS_REG];
 short searchsect[MAXSECTORS], searchparent[MAXSECTORS];
 char dashow2dsector[bitmap_size(MAXSECTORS)];
 
+// SW Chosen: the bots' difficulty (PLAY WITH BOTS, menus.cpp), apart from the monsters' skill
+extern int32_t gSwBotSkill;
+static int botReaction[MAX_SW_PLAYERS_REG];    // calls left before shooting at a newly seen enemy
+static int botLastGoal[MAX_SW_PLAYERS_REG];
+
 void computergetinput(int snum, SW_PACKET *syn)
 {
+    short const Skill = (short)clamp(gSwBotSkill, 0, 3);  // the bots' own difficulty, not the monsters'
     int i, j, k, l, x1, y1, z1, x2, y2, z2, dx, dy, nextj;
     int dist, daang, zang, fightdist, damyang, damysect;
     int startsect, endsect, splc, send, startwall, endwall;
@@ -508,7 +514,7 @@ void computergetinput(int snum, SW_PACKET *syn)
     // If bot is dead, either barf or respawn
     if (TEST(p->Flags, PF_DEAD))
     {
-        if (STD_RANDOM_RANGE(1000) > 990)
+        if (STD_RANDOM_RANGE(1000) > 850)  // back after a second or so
         {
             syn->bits |= (1<<SK_SPACE_BAR);  // Respawn
         }
@@ -572,6 +578,14 @@ void computergetinput(int snum, SW_PACKET *syn)
         ((FAFcansee(x1,y1,z1-(24<<8),damysect,x2,y2,z2-(24<<8),sprite[Player[goalplayer[snum]].PlayerSprite].sectnum)) ||
          (FAFcansee(x1,y1,z1-(48<<8),damysect,x2,y2,z2-(48<<8),sprite[Player[goalplayer[snum]].PlayerSprite].sectnum))))
     {
+        // a new enemy in sight: a moment to react (2 calls is a quarter second)
+        static const int kReaction[4] = { 6, 4, 2, 1 };
+        if (botLastGoal[snum] != goalplayer[snum])
+        {
+            botLastGoal[snum] = goalplayer[snum];
+            botReaction[snum] = kReaction[Skill];
+        }
+
         // Shoot how often by skill level
         short shootrnd=0;
 
@@ -649,9 +663,17 @@ void computergetinput(int snum, SW_PACKET *syn)
         else if (Skill == 2)
             daang = NORM_ANGLE((daang-64) + STD_RANDOM_RANGE(128));
 
-        // Below formula fails in certain cases
-        //syn->q16angvel = fix16_from_int(min(max((((daang+1024-damyang)&2047)-1024)>>1,-MAXANGVEL),MAXANGVEL)); //was 127
-        p->q16ang = fix16_from_int(daang);
+        // turn towards the target like a player does (not in one go), and don't shoot before facing it
+        static const int kTurn[4] = { 160, 260, 400, 640 };  // angle units a call (every 4 tics)
+        int const turnDiff = ((daang - damyang + 1024) & 2047) - 1024;
+        p->q16ang = fix16_from_int(NORM_ANGLE(damyang + min(max(turnDiff, -kTurn[Skill]), kTurn[Skill])));
+        if (botReaction[snum] > 0)
+        {
+            botReaction[snum]--;
+            syn->bits &= ~(1<<SK_SHOOT);
+        }
+        else if (klabs(turnDiff) > 160)
+            syn->bits &= ~(1<<SK_SHOOT);
         syn->q16aimvel = fix16_from_int(min(max((zang-fix16_to_int(p->q16horiz))>>1,-PLAYER_HORIZ_MAX),PLAYER_HORIZ_MAX));
         // Sets type of aiming, auto aim for bots
         syn->bits |= (1<<SK_AUTO_AIM);

@@ -525,6 +525,71 @@ static void MNU_ChosenPlayersText(void)
     Bsnprintf(s_chosenPlayersText, sizeof(s_chosenPlayersText), "Players: %d", gChosenPlayers);
 }
 
+extern uint8_t FakeMultiNumPlayers;
+
+// ---- PLAY WITH BOTS ----
+int32_t gSwBotCount = 3;   // computer players
+int32_t gSwBotSkill = 1;   // 0 easy .. 3 insane (jplayer.cpp: computergetinput)
+static int32_t s_botLevel = 1;
+static char s_botCountText[32], s_botSkillText[40], s_botLevelText[64];
+static const char *const kBotSkillNames[] = { "Easy", "Normal", "Hard", "Insane" };
+
+static void MNU_ChosenBotsText(void)
+{
+    Bsnprintf(s_botCountText, sizeof(s_botCountText), "Bots: %d", gSwBotCount);
+    Bsnprintf(s_botSkillText, sizeof(s_botSkillText), "Difficulty: %s", kBotSkillNames[clamp(gSwBotSkill, 0, 3)]);
+    char const *pzDesc = LevelInfo[s_botLevel].Description;
+    Bsnprintf(s_botLevelText, sizeof(s_botLevelText), "Level: %s", pzDesc && pzDesc[0] ? pzDesc : LevelInfo[s_botLevel].LevelName);
+}
+
+static SWBOOL MNU_ChosenBotCount(void)
+{
+    gSwBotCount = gSwBotCount >= MAX_SW_PLAYERS - 1 ? 1 : gSwBotCount + 1;
+    MNU_ChosenBotsText();
+    return TRUE;
+}
+
+static SWBOOL MNU_ChosenBotSkill(void)
+{
+    gSwBotSkill = (gSwBotSkill + 1) % 4;
+    MNU_ChosenBotsText();
+    return TRUE;
+}
+
+static SWBOOL MNU_ChosenBotLevel(void)
+{
+    s_botLevel = s_botLevel >= MAX_LEVELS - 1 ? 1 : s_botLevel + 1;
+    if (!LevelInfo[s_botLevel].LevelName)
+        s_botLevel = 1;
+    MNU_ChosenBotsText();
+    return TRUE;
+}
+
+// a WangBang match against the bots, on the level picked here
+static SWBOOL MNU_ChosenBotsStart(void)
+{
+    extern SWBOOL BotMode;
+    FakeMultiNumPlayers = clamp(gSwBotCount, 1, MAX_SW_PLAYERS - 1);
+    BotMode = TRUE;
+    gNet.MultiGameType = MULTI_GAME_AI_BOTS;
+    ready2send = 0;
+    Level = s_botLevel;
+    ExitMenus();
+    DemoPlaying = FALSE;
+    ExitLevel = TRUE;
+    NewGame = TRUE;
+    DemoMode = FALSE;
+    CameraTestMode = FALSE;
+    LOG_F(INFO, "Bot match: %d bots (%s), level %d", FakeMultiNumPlayers, kBotSkillNames[clamp(gSwBotSkill, 0, 3)], Level);
+    return TRUE;
+}
+
+SWBOOL MNU_ChosenBotsDraw(UserCall UNUSED(call), MenuItem_p UNUSED(item))
+{
+    MNU_ChosenBotsText();
+    return TRUE;
+}
+
 static SWBOOL MNU_ChosenPlayers(void)
 {
     gChosenPlayers = gChosenPlayers >= MAX_SW_PLAYERS ? 2 : gChosenPlayers + 1;
@@ -772,6 +837,16 @@ MenuItem chosenonline_i[] =
 };
 MenuGroup chosenonlinegroup = {65, 5, "^Online", chosenonline_i, pic_newgametitl, 0, m_defshade, MNU_ChosenOnlineDraw, NULL, 0};
 
+MenuItem chosenbots_i[] =
+{
+    {DefOption(0, s_botCountText), OPT_XS, OPT_LINE(0), 1, m_defshade, 0, MNU_ChosenBotCount, NULL, NULL},
+    {DefOption(0, s_botSkillText), OPT_XS, OPT_LINE(1), 1, m_defshade, 0, MNU_ChosenBotSkill, NULL, NULL},
+    {DefOption(0, s_botLevelText), OPT_XS, OPT_LINE(2), 1, m_defshade, 0, MNU_ChosenBotLevel, NULL, NULL},
+    {DefOption(0, "Start Match"), OPT_XS, OPT_LINE(4), 1, m_defshade, 0, MNU_ChosenBotsStart, NULL, NULL},
+    {DefNone}
+};
+MenuGroup chosenbotsgroup = {65, 5, "^Bots", chosenbots_i, pic_newgametitl, 0, m_defshade, MNU_ChosenBotsDraw, NULL, 0};
+
 MenuItem chosenmp_i[] =
 {
     {DefOption(0, s_chosenPlayersText), OPT_XS, OPT_LINE(0), 1, m_defshade, 0, MNU_ChosenPlayers, NULL, NULL},
@@ -779,6 +854,7 @@ MenuItem chosenmp_i[] =
     {DefLayer(0, "Find LAN Games", &chosenlistgroup), OPT_XS, OPT_LINE(2), 1, m_defshade, 0, MNU_ChosenFindLan, NULL, NULL},
     {DefLayer(0, "Online", &chosenonlinegroup), OPT_XS, OPT_LINE(4), 1, m_defshade, 0, NULL, NULL, NULL},
     {DefOption(0, "Leave Network Game"), OPT_XS, OPT_LINE(6), 1, m_defshade, 0, MNU_ChosenLeave, MNU_ChosenLeaveCheck, NULL},
+    {DefLayer(0, "Play With Bots", &chosenbotsgroup), OPT_XS, OPT_LINE(8), 1, m_defshade, 0, NULL, NULL, NULL},
     {DefNone}
 };
 MenuGroup chosenmpgroup = {65, 5, "^Multiplayer", chosenmp_i, pic_newgametitl, 0, m_defshade, MNU_ChosenMpDraw, NULL, 1};
@@ -2075,6 +2151,15 @@ MNU_StartGame(void)
 
     ready2send = 0;
     Skill = currentmenu->cursor;
+    {
+        extern SWBOOL BotMode;
+        if (BotMode)  // a new game is played alone again
+        {
+            BotMode = FALSE;
+            FakeMultiNumPlayers = 0;
+            gNet.MultiGameType = MULTI_GAME_NONE;
+        }
+    }
 
     if (EpisodeMenuSelection >= 1)
         Level = 5;
@@ -2417,6 +2502,7 @@ MNU_InitMenus(void)
     slidersettings[sldr_joyaxissatur] = 0;
 
     MNU_ChosenPlayersText();
+    MNU_ChosenBotsText();
 
     // Distinguish between Single or Multiplay for new game menu types
     if (numplayers > 1)

@@ -3643,21 +3643,15 @@ int32_t app_main(int32_t argc, char const * const * argv)
             }
         }
         else
-        /* bots suck, bye bye!
-        #ifndef SW_SHAREWARE
-                if (memcmp(argv[cnt], "-bots", 5) == 0)
-            {
-            if (strlen(argv[cnt]) > 5)
-                {
-                FakeMultiNumPlayers = atoi(&argv[cnt][5]);
-                LOG_F(INFO, "Adding %d BOT(s) to the game!", FakeMultiNumPlayers);
-                gNet.MultiGameType = MULTI_GAME_AI_BOTS;
-                BotMode = TRUE;
-                }
-            }
+        // SW Chosen: the bots are back (-botsN), see swbots in jplayer.cpp
+        if (Bstrncasecmp(arg, "bots", 4) == 0 && strlen(arg) > 4)
+        {
+            FakeMultiNumPlayers = atoi(&arg[4]);
+            LOG_F(INFO, "Adding %d BOT(s) to the game!", FakeMultiNumPlayers);
+            gNet.MultiGameType = MULTI_GAME_AI_BOTS;
+            BotMode = TRUE;
+        }
         else
-        #endif
-        */
         if (Bstrncasecmp(arg, "nometers", 8) == 0)
         {
             NoMeters = TRUE;
